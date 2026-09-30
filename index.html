@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SHAH-IPD Coldchain Temperature Monitoring</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2563eb">
+<style>
+  body { background-color: #ffffff; }
+  .choices__inner { background-color: #ffffff !important; border-radius: 8px !important; border: 1px solid #e5e7eb !important; }
+</style>
+</head>
+<body class="bg-white text-gray-900 font-sans">
+
+<!-- PIN Verification Screen -->
+<div id="pin-screen" class="text-center py-10 px-5 bg-white border border-gray-200 rounded-xl max-w-xs mx-auto mt-10 shadow-sm">
+    <h2 class="text-2xl font-semibold mb-6 text-gray-800">Enter PIN</h2>
+    
+    <div class="flex justify-center gap-2 mb-6">
+        <input type="password" class="pbox w-11 h-12 text-center text-xl border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all" id="d1" maxlength="1" inputmode="numeric" oninput="move(this, 'd2')">
+        <input type="password" class="pbox w-11 h-12 text-center text-xl border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all" id="d2" maxlength="1" inputmode="numeric" oninput="move(this, 'd3')">
+        <input type="password" class="pbox w-11 h-12 text-center text-xl border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all" id="d3" maxlength="1" inputmode="numeric" oninput="move(this, 'd4')">
+        <input type="password" class="pbox w-11 h-12 text-center text-xl border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all" id="d4" maxlength="1" inputmode="numeric" oninput="move(this, '')">
+    </div>
+
+    <div id="error-msg" class="text-red-500 text-sm mb-4 hidden">❌ Incorrect PIN.</div>
+    <button onclick="verify()" class="bg-gray-900 hover:bg-black text-white py-3 px-6 rounded-lg font-medium w-full transition-colors">Unlock</button>
+</div>
+
+<!-- Main Application Form (Unlocked) -->
+<div id="secret-content" style="display: none;" class="p-6 max-w-md mx-auto bg-white border border-gray-100 rounded-2xl shadow-sm mt-5">
+    <h3 class="text-lg font-bold text-gray-800 mb-4 text-center">🔓 Access Granted</h3>
+
+    <div id="equipment-info" class="mb-6 text-center"></div>
+
+    <form id="equipment-form" class="space-y-5">
+        <div>
+            <label class="block text-sm font-semibold text-gray-700">Date & Time of Check</label>
+            <input type="datetime-local" id="dateTime" required class="mt-1 w-full border border-gray-300 rounded-lg p-2.5 bg-white focus:ring-2 focus:ring-blue-500 outline-none" max="">
+        </div>
+
+        <div>
+            <label class="block text-sm font-semibold text-gray-700">Session</label>
+            <select id="session" required class="choices mt-1 w-full border border-gray-300 rounded-lg p-2 bg-white">
+                <option value="">Select...</option>
+                <option value="morning">Morning</option>
+                <option value="evening">Evening</option>
+            </select>
+        </div>
+
+        <div>
+            <label class="block text-sm font-semibold text-gray-700">Electricity Status</label>
+            <select id="electricityStatus" required class="choices mt-1 w-full border border-gray-300 rounded-lg p-2 bg-white">
+                <option value="">Select...</option>
+                <option value="running">Running</option>
+                <option value="off">Off</option>
+            </select>
+        </div>
+
+        <div>
+            <label class="block text-sm font-semibold text-gray-700">Temperature (°C)</label>
+            <input type="number" step="0.1" id="temperature" required class="mt-1 w-full border border-gray-300 rounded-lg p-2.5 bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+        </div>
+
+        <div>
+            <label class="block text-sm font-semibold text-gray-700">Checked By</label>
+            <select id="checkedBy" required class="choices mt-1 w-full border border-gray-300 rounded-lg p-2 bg-white"></select>
+        </div>
+
+        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold shadow-sm transition-all">
+            Next
+        </button>
+    </form>
+</div>
+
+<script>
+  const API_URL = 'https://script.google.com/macros/s/AKfycbwltkQI_ljrd68ODKIMJrPca2cDEhTdtdDHZNm70i088yrnbXFGhoHt-LhNdcfNuxbVbg/exec';
+  const STAFF_API_URL = "https://script.google.com/macros/s/AKfycbyaBLAkJtS1lH0uJXZxmpLoHwb6kM51lQWyMuLlvDGXIdfovZhl8ag3MnMDL_aeq-oGmA/exec";
+  const selectedFacility = 'SHAH-IPD';
+
+  let equipmentList = [];
+  let currentIndex = 0;
+  let choicesInstances = {};
+
+  const getMaldivesLocalDateTime = () => {
+    const offsetMinutes = 5 * 60;
+    const nowUtc = new Date();
+    const localTime = new Date(nowUtc.getTime() + offsetMinutes * 60000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${localTime.getUTCFullYear()}-${pad(localTime.getUTCMonth()+1)}-${pad(localTime.getUTCDate())}T${pad(localTime.getUTCHours())}:${pad(localTime.getUTCMinutes())}`;
+  };
+
+  const setSessionBasedOnTime = dateTime => {
+    if (!dateTime) return;
+    const hour = parseInt(dateTime.split('T')[1].split(':')[0], 10);
+    const sessionSelect = document.getElementById('session');
+    sessionSelect.value = hour >= 6 && hour < 13 ? 'morning' :
+                        hour >= 18 && hour < 24 ? 'evening' : '';
+  };
+
+  const setCurrentDateTime = () => {
+    const dtInput = document.getElementById('dateTime');
+    const localTime = getMaldivesLocalDateTime();
+    dtInput.value = localTime;
+    dtInput.max = localTime;
+    setSessionBasedOnTime(localTime);
+  };
+
+  // Resilient Staff Fetching with LocalStorage Fallback for Offline PWA Use
+  const fetchStaffList = async () => {
+    const staffSelect = document.getElementById("checkedBy");
+    staffSelect.innerHTML = "";
+    let staffData = [];
+
+    try {
+      const res = await fetch(STAFF_API_URL);
+      staffData = await res.json();
+      localStorage.setItem('cachedStaffList', JSON.stringify(staffData));
+    } catch (err) {
+      console.warn("Offline detected. Loading staff list from local cache...", err);
+      const cached = localStorage.getItem('cachedStaffList');
+      if (cached) {
+        staffData = JSON.parse(cached);
+      }
+    }
+
+    const filtered = staffData.filter(staff => staff.Hcf === selectedFacility);
+    if (filtered.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "no_staff";
+      opt.textContent = "No staff found. Please register manually.";
+      staffSelect.appendChild(opt);
+      initChoices();
+      return;
+    }
+
+    filtered.forEach(item => {
+      const opt = document.createElement("option");
+      opt.value = item["Staff Name and Designation"];
+      opt.textContent = item["Staff Name and Designation"];
+      staffSelect.appendChild(opt);
+    });
+
+    const registerOpt = document.createElement("option");
+    registerOpt.value = "not_in_list";
+    registerOpt.textContent = "Not in list: Select to Register";
+    staffSelect.appendChild(registerOpt);
+
+    initChoices();
+
+    staffSelect.removeEventListener("change", handleStaffChange);
+    staffSelect.addEventListener("change", handleStaffChange);
+  };
+
+  const handleStaffChange = (e) => {
+    const staffSelect = e.target;
+    if (staffSelect.value === "not_in_list") {
+      const registerURL = `https://shaviyanipublichealth.blogspot.com/p/register-new.html?hcf=${encodeURIComponent(selectedFacility)}`;
+      window.open(registerURL, "RegisterStaff", "width=900,height=700,top=100,left=100,resizable=yes,scrollbars=yes");
+      staffSelect.choicesInstance?.setChoiceByValue("");
+    }
+  };
+
+  const fetchEquipment = async () => {
+    try {
+      const res = await fetch(`${API_URL}?action=getEquipment&facility=${selectedFacility}`);
+      equipmentList = await res.json();
+      currentIndex = 0;
+      if (equipmentList.length > 0) showEquipment(currentIndex);
+    } catch (err) {
+      console.error('Failed to fetch equipment', err);
+    }
+  };
+
+  const showEquipment = index => {
+    const eq = equipmentList[index];
+    const infoEl = document.getElementById('equipment-info');
+    infoEl.innerHTML = `
+      ${eq.image ? `<img src="${eq.image}" alt="${eq.name}" class="rounded-xl border border-gray-100 shadow-sm max-h-48 mx-auto mb-4" />` : ''}
+      <h3 class="text-xl font-bold text-gray-900">${eq.name}</h3>
+    `;
+    document.getElementById('equipment-form').reset();
+    setCurrentDateTime();
+  };
+
+  const initChoices = () => {
+    Object.values(choicesInstances).forEach(i => i.destroy());
+    choicesInstances = {};
+    document.querySelectorAll('select.choices').forEach(select => {
+      choicesInstances[select.id] = new Choices(select, {
+        searchEnabled: true,
+        addItems: select.id === 'checkedBy',
+        duplicateItemsAllowed: false,
+        shouldSort: false,
+        itemSelectText: '',
+        allowHTML: false,
+        placeholder: true,
+        placeholderValue: 'Select or search...'
+      });
+    });
+  };
+
+  document.getElementById('equipment-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+    const eq = equipmentList[currentIndex];
+    const payload = {
+      facility: selectedFacility,
+      equipmentId: eq.equipmentId,
+      equipmentName: eq.name,
+      dateTime: document.getElementById('dateTime').value,
+      session: document.getElementById('session').value,
+      electricityStatus: document.getElementById('electricityStatus').value,
+      temperature: document.getElementById('temperature').value,
+      checkedBy: document.getElementById('checkedBy').value
+    };
+    try {
+      await fetch(API_URL, { method: 'POST', body: JSON.stringify(payload) });
+      currentIndex++;
+      if (currentIndex < equipmentList.length) {
+        showEquipment(currentIndex);
+      } else {
+        window.location.href = 'tempcheck-logs.html';
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to submit data. Please check your connection.');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Next';
+    }
+  });
+
+  window.addEventListener('DOMContentLoaded', () => {
+    fetchStaffList();
+    fetchEquipment();
+    setCurrentDateTime();
+  });
+</script>
+
+<script>
+function move(current, nextId) {
+    if (current.value.length >= 1 && nextId !== "") {
+        document.getElementById(nextId).focus();
+    }
+    if (nextId === "") { verify(); }
+}
+
+document.querySelectorAll('.pbox').forEach((box, index, all) => {
+    box.addEventListener('keydown', (e) => {
+        if (e.key === "Backspace" && box.value === "" && index > 0) {
+            all[index - 1].focus();
+        }
+    });
+});
+
+function verify() {
+    const p1 = document.getElementById('d1').value;
+    const p2 = document.getElementById('d2').value;
+    const p3 = document.getElementById('d3').value;
+    const p4 = document.getElementById('d4').value;
+    const salt = "BloggerVault77";
+    const combined = p1 + p2 + p3 + p4 + salt;
+    const secureKey = "MjU4MEJsb2dnZXJWYXVsdDc3"; 
+
+    if (btoa(combined) === secureKey) {
+        document.getElementById('pin-screen').style.display = 'none';
+        document.getElementById('secret-content').style.display = 'block';
+    } else {
+        document.getElementById('error-msg').style.display = 'block';
+        document.querySelectorAll('.pbox').forEach(b => b.value = "");
+        document.getElementById('d1').focus();
+    }
+}
+</script>
+
+<!-- Service Worker Registration -->
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js")
+      .then(reg => console.log("Service Worker Registered successfully"))
+      .catch(err => console.log("SW registration failed", err));
+  });
+}
+</script>
+
+</body>
+</html>
